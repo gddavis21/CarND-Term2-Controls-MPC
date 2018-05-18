@@ -30,3 +30,9 @@
 *.exe
 *.out
 *.app
+
+.vscode
+build
+tags
+.editorconfig
+.DS_Store
