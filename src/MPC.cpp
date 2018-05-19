@@ -1,5 +1,6 @@
 #include "MPC.h"
 #include <vector>
+#include <cfloat>
 #include <cppad/cppad.hpp>
 #include <cppad/ipopt/solve.hpp>
 #include "Eigen-3.3/Eigen/Dense"
@@ -23,7 +24,7 @@ double dt = 0.1;
 // This is the length from front to CoG that has a similar radius.
 const double Lf = 2.67;
 
-const ref_velocity = 30.0;
+const double ref_velocity = 30.0;
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
@@ -55,20 +56,26 @@ public:
         // NOTE: You'll probably go back and forth between this function and
         // the Solver function below.
 
-        // The cost is stored is the first element of `fg`.
-        // Any additions to the cost should be added to `fg[0]`.
+        // cost is stored in fg[0]
         fg[0] = 0;
 
-        // Reference State Cost
-        // Define the cost related the reference state and
-        // any anything you think may be beneficial.
-        for (int t=0; t < N; t++) {
-            AD<double> cte_t = vars[cte_start + t];
-            AD<double> epsi_t = vars[epsi_start + t];
-            AD<double> v_t = vars[v_start + t];
-            fg[0] += CppAD::pow(cte_t, 2);
-            fg[0] += CppAD::pow(epsi_t, 2);
-            fg[0] += CppAD::pow(v_t - ref_velocity, 2);
+        // add reference-state cost
+        for (size_t t=0; t < N; t++) {
+            fg[0] += CppAD::pow(vars[cte_start + t], 2);
+            fg[0] += CppAD::pow(vars[epsi_start + t], 2);
+            fg[0] += CppAD::pow(vars[v_start + t] - ref_velocity, 2);
+        }
+
+        // penalize actuator changes
+        for (size_t t=0; t < N-1; t++) {
+            fg[0] += CppAD::pow(vars[delta_start + t], 2);
+            fg[0] += CppAD::pow(vars[a_start + t], 2);
+        }
+
+        // penalize rate of actuator changes
+        for (size_t t=0; t < N-2; t++) {
+            fg[0] += CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+            fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
         }
 
         //
@@ -133,50 +140,9 @@ public:
     }
 };
 
-vector<double> SolveMPC(
-    const Eigen::VectorXd &state, 
-    const Polynomial &traj) 
+// options for IPOPT solver
+std::string SolverOptions()
 {
-    bool ok = true;
-    size_t i;
-    typedef CPPAD_TESTVECTOR(double) Dvector;
-
-    // TODO: Set the number of model variables (includes both states and inputs).
-    // For example: If the state is a 4 element vector, the actuators is a 2
-    // element vector and there are 10 timesteps. The number of variables is:
-    //
-    // 4 * 10 + 2 * 9
-    size_t n_vars = 6*N + 2*(N-1);
-    // TODO: Set the number of constraints
-    size_t n_constraints = 6*N;
-
-    // Initial value of the independent variables.
-    // SHOULD BE 0 besides initial state.
-    Dvector vars(n_vars);
-    for (int i = 0; i < n_vars; i++) {
-        vars[i] = 0;
-    }
-
-    Dvector vars_lowerbound(n_vars);
-    Dvector vars_upperbound(n_vars);
-    // TODO: Set lower and upper limits for variables.
-
-    // Lower and upper limits for the constraints
-    // Should be 0 besides initial state.
-    Dvector constraints_lowerbound(n_constraints);
-    Dvector constraints_upperbound(n_constraints);
-    for (int i = 0; i < n_constraints; i++) {
-    constraints_lowerbound[i] = 0;
-    constraints_upperbound[i] = 0;
-    }
-
-    // object that computes objective and constraints
-    FG_eval fg_eval(coeffs);
-
-    //
-    // NOTE: You don't have to worry about these options
-    //
-    // options for IPOPT solver
     std::string options;
     // Uncomment this if you'd like more print information
     options += "Integer print_level  0\n";
@@ -191,25 +157,121 @@ vector<double> SolveMPC(
     // Change this as you see fit.
     options += "Numeric max_cpu_time          0.5\n";
 
-    // place to return solution
-    CppAD::ipopt::solve_result<Dvector> solution;
+    return options;
+}
+
+VehicleActuators SolveMPC(const VehicleState &state, const Polynomial &traj) 
+{
+    typedef CPPAD_TESTVECTOR(double) Dvector;
+
+    // extract current state
+    double x = state.x;
+    double y = state.y;
+    double psi = state.psi;
+    double v = state.v;
+    double cte = state.CrossTrackError(traj);
+    double epsi = state.OrientationError(traj);
+
+    // number of independent variables & constraints
+    size_t n_vars = 6*N + 2*(N-1);
+    size_t n_constraints = 6*N;
+
+    // Initial value of the independent variables.
+    // SHOULD BE 0 besides initial state.
+    Dvector vars(n_vars);
+    for (size_t i = 0; i < n_vars; i++) {
+        vars[i] = 0;
+    }
+
+    // set initial state variables
+    vars[x_start] = x;
+    vars[y_start] = y;
+    vars[psi_start] = psi;
+    vars[v_start] = v;
+    vars[cte_start] = cte;
+    vars[epsi_start] = epsi;
+
+    // variable lower/upper bounds
+    Dvector vars_lowerbound(n_vars);
+    Dvector vars_upperbound(n_vars);
+
+    // make non-actuator variables (effectively) unbounded
+    for (size_t i = 0; i < delta_start; i++) {
+        vars_lowerbound[i] = -DBL_MAX;
+        vars_upperbound[i] = DBL_MAX;
+    }
+
+    // The upper and lower limits of delta are set to -25 and 25
+    // degrees (values in radians).
+    const double STEERING_LIMIT = deg2rad(25.0);
+    for (size_t i = delta_start; i < a_start; i++) {
+        vars_lowerbound[i] = -STEERING_LIMIT;
+        vars_upperbound[i] = STEERING_LIMIT;
+    }
+
+    // -1 <= acceleration <= 1
+    for (size_t i = a_start; i < n_vars; i++) {
+        vars_lowerbound[i] = -1.0;
+        vars_upperbound[i] = 1.0;
+    }
+
+    // Lower and upper limits for the constraints
+    // Should be 0 besides initial state.
+    Dvector constraints_lowerbound(n_constraints);
+    Dvector constraints_upperbound(n_constraints);
+
+    for (size_t i = 0; i < n_constraints; i++) {
+        constraints_lowerbound[i] = 0;
+        constraints_upperbound[i] = 0;
+    }
+
+    constraints_lowerbound[x_start] = x;
+    constraints_lowerbound[y_start] = y;
+    constraints_lowerbound[psi_start] = psi;
+    constraints_lowerbound[v_start] = v;
+    constraints_lowerbound[cte_start] = cte;
+    constraints_lowerbound[epsi_start] = epsi;
+
+    constraints_upperbound[x_start] = x;
+    constraints_upperbound[y_start] = y;
+    constraints_upperbound[psi_start] = psi;
+    constraints_upperbound[v_start] = v;
+    constraints_upperbound[cte_start] = cte;
+    constraints_upperbound[epsi_start] = epsi;
+
+    // object that computes objective and constraints
+    FG_eval fg_eval(traj);
 
     // solve the problem
+    CppAD::ipopt::solve_result<Dvector> solution;
+    VehicleActuators actuators;
+
     CppAD::ipopt::solve<Dvector, FG_eval>(
-    options, vars, vars_lowerbound, vars_upperbound, constraints_lowerbound,
-    constraints_upperbound, fg_eval, solution);
+        SolverOptions(), 
+        vars, 
+        vars_lowerbound, 
+        vars_upperbound, 
+        constraints_lowerbound,
+        constraints_upperbound, 
+        fg_eval, 
+        solution);  // OUTPUT
 
-    // Check some of the solution values
-    ok &= solution.status == CppAD::ipopt::solve_result<Dvector>::success;
+    // diagnostic output
+    if (solution.status == CppAD::ipopt::solve_result<Dvector>::success) 
+    {
+        auto cost = solution.obj_value;
+        std::cout << "Cost " << cost << std::endl;
 
-    // Cost
-    auto cost = solution.obj_value;
-    std::cout << "Cost " << cost << std::endl;
+        // Return the first actuator values. The variables can be accessed with
+        // `solution.x[i]`.
+        actuators.steer = solution.x[delta_start];
+        actuators.accel = solution.x[a_start];
+    }
+    else 
+    {
+        std::cout << "Solver failed" << std::endl;
+        actuators.steer = actuators.accel = 0;
+    }
 
-    // TODO: Return the first actuator values. The variables can be accessed with
-    // `solution.x[i]`.
-    //
-    // {...} is shorthand for creating a vector, so auto x1 = {1.0,2.0}
-    // creates a 2 element double vector.
-    return {};
+    return actuators;
 }

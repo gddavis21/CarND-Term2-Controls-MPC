@@ -1,7 +1,45 @@
-#include "Polynomial.h"
+#include "Utility.h"
 
 using namespace Eigen;
 using CppAD::AD;
+
+CoordFrame2D::CoordFrame2D(double org_x, double org_y, double orient) 
+{
+    _orgX = org_x;
+    _orgY = org_y;
+    _cosR = cos(orient);
+    _sinR = sin(orient);
+}
+
+void CoordFrame2D::GlobalToLocal(double &x, double &y) const
+{
+    double a = x - _orgX;
+    double b = y - _orgY;
+    x = a*_cosR + b*_sinR;
+    y = b*_cosR - a*_sinR; 
+}
+
+void CoordFrame2D::LocalToGlobal(double &x, double &y) const
+{
+    double a = x;
+    double b = y;
+    x = a*_cosR - b*_sinR + _orgX;
+    y = a*_sinR + b*_cosR + _orgY;
+}
+
+void CoordFrame2D::GlobalToLocal(size_t count, double *x, double *y) const
+{
+    for (size_t i=0; i < count; i++) {
+        GlobalToLocal(x[i], y[i]);
+    }
+}
+
+void CoordFrame2D::LocalToGlobal(size_t count, double *x, double *y) const
+{
+    for (size_t i=0; i < count; i++) {
+        LocalToGlobal(x[i], y[i]);
+    }
+}
 
 namespace 
 {
@@ -32,11 +70,14 @@ namespace
 }
 
 Polynomial::Polynomial(
-    const Eigen::VectorXd &xvals, 
-    const Eigen::VectorXd &yvals,
-    size_t degree)
+    size_t degree,
+    size_t count,
+    const double *xvals, 
+    const double *yvals)
 {
-    _coeffs = polyfit(xvals, yvals, degree);
+    Map<const VectorXd> mx(xvals, count);
+    Map<const VectorXd> my(yvals, count);
+    _coeffs = polyfit(mx, my, degree);
 }
 
 // evaluate polynomial
