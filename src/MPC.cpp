@@ -9,7 +9,8 @@ using CppAD::AD;
 
 // Set the timestep length and duration
 size_t N = 20;
-double dt = 0.1;
+double D = 50.0;
+//double dt = 0.1;
 
 // This value assumes the model presented in the classroom is used.
 //
@@ -43,10 +44,15 @@ class FG_eval
 private:
     // Polynomial _ref_traj;  // reference trajectory
     Eigen::VectorXd _ref_traj;
+    double _time_step;
 
 public:
     // FG_eval(const Polynomial &ref_traj) : _ref_traj(ref_traj) {}
-    FG_eval(const Eigen::VectorXd &ref_traj) : _ref_traj(ref_traj) {}
+    FG_eval(const Eigen::VectorXd &ref_traj, double time_step)
+    {
+        _ref_traj = ref_traj;
+        _time_step = time_step;
+    }
 
     typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
 
@@ -95,6 +101,8 @@ public:
         fg[1 + v_start] = vars[v_start];
         fg[1 + cte_start] = vars[cte_start];
         fg[1 + epsi_start] = vars[epsi_start];
+
+        double dt = _time_step;
 
         // The rest of the constraints
         for (size_t t = 1; t < N; t++) 
@@ -256,7 +264,8 @@ bool MPC_Solve(
     constraints_upperbound[epsi_start] = epsi;
 
     // object that computes objective and constraints
-    FG_eval fg_eval(ref_traj);
+    double time_step = D / (N*std::max(v,1.0));
+    FG_eval fg_eval(ref_traj, time_step);
 
     // solve the problem
     CppAD::ipopt::solve_result<Dvector> solution;
