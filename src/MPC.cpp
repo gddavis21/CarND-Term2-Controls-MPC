@@ -3,13 +3,12 @@
 #include <cfloat>
 #include <cppad/cppad.hpp>
 #include <cppad/ipopt/solve.hpp>
-#include "Eigen-3.3/Eigen/Dense"
 
 using namespace std;
 using CppAD::AD;
 
 // Set the timestep length and duration
-size_t N = 10;
+size_t N = 20;
 double dt = 0.1;
 
 // This value assumes the model presented in the classroom is used.
@@ -24,7 +23,8 @@ double dt = 0.1;
 // This is the length from front to CoG that has a similar radius.
 const double Lf = 2.67;
 
-const double ref_velocity = 30.0;
+const double ref_velocity = mph_to_mps(30.0);
+//const double ref_velocity = 30.0;
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
@@ -41,11 +41,12 @@ const size_t a_start = delta_start + N - 1;
 class FG_eval 
 {
 private:
-    // fitted polynomial trajectory
-    Polynomial _traj;
+    // Polynomial _ref_traj;  // reference trajectory
+    Eigen::VectorXd _ref_traj;
 
 public:
-    FG_eval(const Polynomial &traj) : _traj(traj) {}
+    // FG_eval(const Polynomial &ref_traj) : _ref_traj(ref_traj) {}
+    FG_eval(const Eigen::VectorXd &ref_traj) : _ref_traj(ref_traj) {}
 
     typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
 
@@ -61,21 +62,21 @@ public:
 
         // add reference-state cost
         for (size_t t=0; t < N; t++) {
-            fg[0] += CppAD::pow(vars[cte_start + t], 2);
-            fg[0] += CppAD::pow(vars[epsi_start + t], 2);
+            fg[0] += 20*CppAD::pow(vars[cte_start + t], 2);
+            fg[0] += 20*CppAD::pow(vars[epsi_start + t], 2);
             fg[0] += CppAD::pow(vars[v_start + t] - ref_velocity, 2);
         }
 
         // penalize actuator changes
         for (size_t t=0; t < N-1; t++) {
-            fg[0] += CppAD::pow(vars[delta_start + t], 2);
-            fg[0] += CppAD::pow(vars[a_start + t], 2);
+            fg[0] += 5000*CppAD::pow(vars[delta_start + t], 2);
+            fg[0] += 50*CppAD::pow(vars[a_start + t], 2);
         }
 
         // penalize rate of actuator changes
         for (size_t t=0; t < N-2; t++) {
-            fg[0] += CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-            fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+            fg[0] += 5000*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+            fg[0] += 10*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
         }
 
         //
@@ -96,7 +97,7 @@ public:
         fg[1 + epsi_start] = vars[epsi_start];
 
         // The rest of the constraints
-        for (int t = 1; t < N; t++) 
+        for (size_t t = 1; t < N; t++) 
         {
             AD<double> x0 = vars[x_start + t - 1];
             AD<double> x1 = vars[x_start + t];
@@ -119,8 +120,10 @@ public:
             AD<double> del0 = vars[delta_start + t - 1];
             AD<double> a0 = vars[a_start + t - 1];
 
-            AD<double> f0 = _traj.Evaluate(x0);
-            AD<double> psides0 = CppAD::atan(_traj.Derivative(x0));
+            // AD<double> f0 = _ref_traj.Evaluate(x0);
+            AD<double> f0 = _ref_traj[0] + _ref_traj[1]*x0 + _ref_traj[2]*x0*x0 + _ref_traj[3]*x0*x0*x0;
+            // AD<double> psides0 = CppAD::atan(_ref_traj.Derivative(x0));
+            AD<double> psides0 = CppAD::atan(_ref_traj[1] + 2*_ref_traj[2]*x0 + 3*_ref_traj[3]*x0*x0);
 
             // Here's `x` to get you started.
             // The idea here is to constraint this value to be 0.
@@ -134,7 +137,7 @@ public:
             fg[1 + y_start + t] = y1 - (y0 + v0*CppAD::sin(psi0)*dt);
             fg[1 + psi_start + t] = psi1 - (psi0 + v0*del0*dt/Lf);
             fg[1 + v_start + t] = v1 - (v0 + a0*dt);
-            fg[1 + cte_start + t] = cte1 - ((f0-y0) + v0*CppAD::sin(epsi0)*dt);
+            fg[1 + cte_start + t] = cte1 - ((y0-f0) + v0*CppAD::sin(epsi0)*dt);
             fg[1 + epsi_start + t] = epsi1 - ((psi0-psides0) + v0*del0*dt/Lf);
         }
     }
@@ -160,7 +163,11 @@ std::string SolverOptions()
     return options;
 }
 
-VehicleActuators SolveMPC(const VehicleState &state, const Polynomial &traj) 
+bool MPC_Solve(
+    const VehicleState &state, 
+    //const Polynomial &ref_traj,
+    const Eigen::VectorXd &ref_traj,
+    MPC_Results &results) 
 {
     typedef CPPAD_TESTVECTOR(double) Dvector;
 
@@ -169,8 +176,14 @@ VehicleActuators SolveMPC(const VehicleState &state, const Polynomial &traj)
     double y = state.y;
     double psi = state.psi;
     double v = state.v;
-    double cte = state.CrossTrackError(traj);
-    double epsi = state.OrientationError(traj);
+
+    double ref_y = ref_traj[0] + ref_traj[1]*x + ref_traj[2]*x*x + ref_traj[3]*x*x*x;
+    double ref_psi = atan(ref_traj[1] + 2*ref_traj[2]*x + 3*ref_traj[3]*x*x);
+    double cte = y - ref_y;
+    double epsi = psi - ref_psi;
+
+    std::cout << "cross-track error: " << cte << std::endl;
+    std::cout << "orientation error: " << epsi << std::endl;
 
     // number of independent variables & constraints
     size_t n_vars = 6*N + 2*(N-1);
@@ -197,13 +210,16 @@ VehicleActuators SolveMPC(const VehicleState &state, const Polynomial &traj)
 
     // make non-actuator variables (effectively) unbounded
     for (size_t i = 0; i < delta_start; i++) {
-        vars_lowerbound[i] = -DBL_MAX;
-        vars_upperbound[i] = DBL_MAX;
+        // vars_lowerbound[i] = -DBL_MAX;
+        // vars_upperbound[i] = DBL_MAX;
+        vars_lowerbound[i] = -1.0e19;
+        vars_upperbound[i] = 1.0e19;
     }
 
     // The upper and lower limits of delta are set to -25 and 25
     // degrees (values in radians).
-    const double STEERING_LIMIT = deg2rad(25.0);
+    double STEERING_LIMIT = deg_to_rad(25.0);
+
     for (size_t i = delta_start; i < a_start; i++) {
         vars_lowerbound[i] = -STEERING_LIMIT;
         vars_upperbound[i] = STEERING_LIMIT;
@@ -240,11 +256,10 @@ VehicleActuators SolveMPC(const VehicleState &state, const Polynomial &traj)
     constraints_upperbound[epsi_start] = epsi;
 
     // object that computes objective and constraints
-    FG_eval fg_eval(traj);
+    FG_eval fg_eval(ref_traj);
 
     // solve the problem
     CppAD::ipopt::solve_result<Dvector> solution;
-    VehicleActuators actuators;
 
     CppAD::ipopt::solve<Dvector, FG_eval>(
         SolverOptions(), 
@@ -257,21 +272,24 @@ VehicleActuators SolveMPC(const VehicleState &state, const Polynomial &traj)
         solution);  // OUTPUT
 
     // diagnostic output
-    if (solution.status == CppAD::ipopt::solve_result<Dvector>::success) 
-    {
-        auto cost = solution.obj_value;
-        std::cout << "Cost " << cost << std::endl;
-
-        // Return the first actuator values. The variables can be accessed with
-        // `solution.x[i]`.
-        actuators.steer = solution.x[delta_start];
-        actuators.accel = solution.x[a_start];
-    }
-    else 
+    if (solution.status != CppAD::ipopt::solve_result<Dvector>::success)
     {
         std::cout << "Solver failed" << std::endl;
-        actuators.steer = actuators.accel = 0;
+        return false;
+    } 
+
+    std::cout << "Cost " << solution.obj_value << std::endl;
+
+    // Return the first actuator values.
+    results.steer = solution.x[delta_start];
+    results.accel = solution.x[a_start];
+
+    // Also return predicted x/y position values.
+    for (size_t t=1; t < N; t++)
+    {
+        results.traj_x.push_back(solution.x[x_start + t]);
+        results.traj_y.push_back(solution.x[y_start + t]);
     }
 
-    return actuators;
+    return true;
 }

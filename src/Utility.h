@@ -2,18 +2,21 @@
 #define UTILITY_H
 
 #include <math.h>
-#include "Eigen-3.3/Eigen/Dense"
+#include "Eigen/Dense"
 #include <cppad/cppad.hpp>
 
-// For converting back and forth between radians and degrees.
-constexpr double pi() { return M_PI; }
-double deg2rad(double x) { return x * pi() / 180; }
-double rad2deg(double x) { return x * 180 / pi(); }
+// conversions between degrees and radians
+double deg_to_rad(double deg);
+double rad_to_deg(double rad);
+
+// conversions between miles/hour and meters/sec
+double mph_to_mps(double mph);
+double mps_to_mph(double mps);
 
 class CoordFrame2D
 {
 public:
-    CoordFrame2D(double org_x, double org_y, double orient);
+    CoordFrame2D(double x_offs, double y_offs, double orient);
 
     void GlobalToLocal(double &x, double &y) const;
     void LocalToGlobal(double &x, double &y) const;
@@ -22,29 +25,29 @@ public:
     void LocalToGlobal(size_t count, double *x, double *y) const;
 
 private:
-    double _orgX, _orgY, _cosR, _sinR;
+    double _xoffs, _yoffs, _cosA, _sinA;
 };
 
-class Polynomial 
-{
-public:
-    Polynomial(
-        size_t degree,
-        size_t count,
-        const double *xvals, 
-        const double *yvals);
+// class Polynomial 
+// {
+// public:
+//     Polynomial(
+//         size_t degree,
+//         size_t count,
+//         const double *xvals, 
+//         const double *yvals);
 
-    // evaluate polynomial at x
-    double Evaluate(double x) const;
+//     // evaluate polynomial at x
+//     double Evaluate(double x) const;
 
-    // evaluate polynomial 1st derivative at x
-    double Derivative(double x) const;
+//     // evaluate polynomial 1st derivative at x
+//     double Derivative(double x) const;
 
-    CppAD::AD<double> Evaluate(const CppAD::AD<double> &x) const;
-    CppAD::AD<double> Derivative(const CppAD::AD<double> &x) const;
+//     CppAD::AD<double> Evaluate(const CppAD::AD<double> &x) const;
+//     CppAD::AD<double> Derivative(const CppAD::AD<double> &x) const;
 
-private:
-    Eigen::VectorXd _coeffs;
-};
+// private:
+//     Eigen::VectorXd _coeffs;
+// };
 
 #endif /* UTILITY_H */

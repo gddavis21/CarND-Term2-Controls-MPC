@@ -2,7 +2,7 @@
 #define MPC_H
 
 #include <vector>
-#include "Eigen-3.3/Eigen/Core"
+#include "Eigen/Dense"
 #include "Utility.h"
 
 struct VehicleState
@@ -11,24 +11,22 @@ struct VehicleState
     double y;
     double psi;
     double v;
-
-    double CrossTrackError(const Polynomial &traj) const {
-        return traj.Evaluate(x) - y;
-    }
-
-    double OrientationError(const Polynomial &traj) const {
-        return psi - atan(traj.Derivative(x));
-    }
 };
 
-struct VehicleActuators
+struct MPC_Results
 {
     double steer;
     double accel;
+    std::vector<double> traj_x;
+    std::vector<double> traj_y;
 };
 
 // Solve the model given an initial state and polynomial trajectory.
 // Return the first actuations.
-VehicleActuators SolveMPC(const VehicleState &state, const Polynomial &traj);
+bool MPC_Solve(
+    const VehicleState &state, 
+    //const Polynomial &ref_traj,
+    const Eigen::VectorXd &ref_traj,
+    MPC_Results &results);
 
 #endif /* MPC_H */

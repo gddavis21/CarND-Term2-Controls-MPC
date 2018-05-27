@@ -4,8 +4,7 @@
 #include <iostream>
 #include <thread>
 #include <vector>
-#include "Eigen-3.3/Eigen/Core"
-#include "Eigen-3.3/Eigen/QR"
+#include "Eigen/Dense"
 #include "Utility.h"
 #include "MPC.h"
 #include "json.hpp"
@@ -43,36 +42,36 @@ string hasData(string s) {
 //   return result;
 // }
 
-// // Fit a polynomial.
-// // Adapted from
-// // https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
-// Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
-//                         int order) {
-//   assert(xvals.size() == yvals.size());
-//   assert(order >= 1 && order <= xvals.size() - 1);
-//   Eigen::MatrixXd A(xvals.size(), order + 1);
+// Fit a polynomial.
+// Adapted from
+// https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
+Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
+                        int order) {
+  assert(xvals.size() == yvals.size());
+  assert(order >= 1 && order <= xvals.size() - 1);
+  Eigen::MatrixXd A(xvals.size(), order + 1);
 
-//   for (int i = 0; i < xvals.size(); i++) {
-//     A(i, 0) = 1.0;
-//   }
+  for (int i = 0; i < xvals.size(); i++) {
+    A(i, 0) = 1.0;
+  }
 
-//   for (int j = 0; j < xvals.size(); j++) {
-//     for (int i = 0; i < order; i++) {
-//       A(j, i + 1) = A(j, i) * xvals(j);
-//     }
-//   }
+  for (int j = 0; j < xvals.size(); j++) {
+    for (int i = 0; i < order; i++) {
+      A(j, i + 1) = A(j, i) * xvals(j);
+    }
+  }
 
-//   auto Q = A.householderQr();
-//   auto result = Q.solve(yvals);
-//   return result;
-// }
+  auto Q = A.householderQr();
+  auto result = Q.solve(yvals);
+  return result;
+}
 
 int main() 
 {
-    uWS::Hub h;
+    const unsigned int LATENCY_ms = 0;
+    const bool VISUALIZE = true;
 
-    // MPC is initialized here!
-    //MPC mpc;
+    uWS::Hub h;
 
     h.onMessage([](
         uWS::WebSocket<uWS::SERVER> ws, 
@@ -86,7 +85,8 @@ int main()
         string sdata = string(data).substr(0, length);
         cout << sdata << endl;
 
-        if (sdata.size() < 3 || sdata[0] != '4' || sdata[2] != '2') {
+        if (sdata.size() < 3 || sdata[0] != '4' || sdata[1] != '2') {
+            cout << "unrecognized message" << endl;
             return;
         } 
         
@@ -103,68 +103,105 @@ int main()
         string event = j[0].get<string>();
 
         if (event != "telemetry") {
+            cout << "ignoring simulator message: " << event << endl;
             return;
         } 
         
+        // extract input data from simulator
         // j[1] is the data JSON object
-        vector<double> ptsx = j[1]["ptsx"];
-        vector<double> ptsy = j[1]["ptsy"];
-        double px = j[1]["x"];
-        double py = j[1]["y"];
-        double psi = j[1]["psi"];
-        double v = j[1]["speed"];
+        vector<double> ptsx = j[1]["ptsx"];     // waypoints x values
+        vector<double> ptsy = j[1]["ptsy"];     // waypoints y values
+        double px = j[1]["x"];                  // vehicle current x position
+        double py = j[1]["y"];                  // vehicle current y position
+        double psi = j[1]["psi"];               // vehicle current orientation
+        double v = j[1]["speed"];               // vehicle current velocity
+
+        // output data we'll send back to simulator
+        double steer_value = 0;
+        double throttle_value = 0;
+        vector<double> ref_traj_x, ref_traj_y;  // reference trajectory
+        vector<double> mpc_traj_x, mpc_traj_y;  // predicted trajectory
 
         // transform waypoints from map to vehicle coordinates
         CoordFrame2D veh_frame(px, py, psi);
         veh_frame.GlobalToLocal(ptsx.size(), &ptsx[0], &ptsy[0]);
 
+        cout << "Waypoints (veh coords)" << endl;
+        cout << "x:";
+        for (size_t i=0; i < ptsx.size(); i++)
+            cout << " " << ptsx[i];
+        cout << endl;
+        cout << "y:";
+        for (size_t i=0; i < ptsy.size(); i++)
+            cout << " " << ptsy[i];
+        cout << endl;
+        
         // best-fit cubic polynomial trajectory to waypoints
-        Polynomial veh_traj(3, ptsx.size(), &ptsx[0], &ptsy[0]);
+        // Polynomial ref_traj(3, ptsx.size(), &ptsx[0], &ptsy[0]);
+        Eigen::Map<Eigen::VectorXd> mx(&ptsx[0], ptsx.size());
+        Eigen::Map<Eigen::VectorXd> my(&ptsy[0], ptsx.size());
+        Eigen::VectorXd ref_traj = polyfit(mx, my, 3);
+
+        if (VISUALIZE)
+        {
+            for (double x = 5.0; x < 50.0; x += 2.0)
+            {
+                double y = ref_traj[0] + ref_traj[1]*x + ref_traj[2]*x*x + ref_traj[3]*x*x*x;
+                ref_traj_x.push_back(x);
+                ref_traj_y.push_back(y);
+            }
+        }
 
         // working in vehicle coordinates
         VehicleState veh_state;
         veh_state.x = 0;
         veh_state.y = 0;
         veh_state.psi = 0;
-        veh_state.v = v;
+        veh_state.v = mph_to_mps(v);
 
-        VehicleActuators actuators = SolveMPC(veh_state, veh_traj);
+        MPC_Results mpc_results;
+
+        if (MPC_Solve(veh_state, ref_traj, mpc_results))
+        {
+            steer_value = -mpc_results.steer;
+            throttle_value = mpc_results.accel;
+
+            if (VISUALIZE)
+            {
+                mpc_traj_x = mpc_results.traj_x;
+                mpc_traj_y = mpc_results.traj_y;
+            }
+        }
 
         // Calculate steering angle and throttle using MPC.
         // Both are in between [-1, 1].
 
-        double steer_value = actuators.steer;
-        double throttle_value = actuators.accel;
-
         json msgJson;
         // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
         // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
-        msgJson["steering_angle"] = steer_value;
+        msgJson["steering_angle"] = steer_value / deg_to_rad(25);
         msgJson["throttle"] = throttle_value;
 
         //Display the MPC predicted trajectory 
-        vector<double> mpc_x_vals;
-        vector<double> mpc_y_vals;
 
         //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
         // the points in the simulator are connected by a Green line
 
-        msgJson["mpc_x"] = mpc_x_vals;
-        msgJson["mpc_y"] = mpc_y_vals;
+        msgJson["mpc_x"] = mpc_traj_x;
+        msgJson["mpc_y"] = mpc_traj_y;
 
         //Display the waypoints/reference line
-        vector<double> next_x_vals;
-        vector<double> next_y_vals;
 
         //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
         // the points in the simulator are connected by a Yellow line
 
-        msgJson["next_x"] = next_x_vals;
-        msgJson["next_y"] = next_y_vals;
+        msgJson["next_x"] = ref_traj_x;
+        msgJson["next_y"] = ref_traj_y;
 
 
         auto msg = "42[\"steer\"," + msgJson.dump() + "]";
         std::cout << msg << std::endl;
+
         // Latency
         // The purpose is to mimic real driving conditions where
         // the car does not actuate the commands instantly.
@@ -174,7 +211,7 @@ int main()
         //
         // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
         // SUBMITTING.
-        this_thread::sleep_for(chrono::milliseconds(100));
+        this_thread::sleep_for(chrono::milliseconds(LATENCY_ms));
         ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
     });
 
