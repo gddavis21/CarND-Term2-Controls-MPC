@@ -71,9 +71,10 @@ int main()
     const unsigned int LATENCY_ms = 0;
     const bool VISUALIZE = true;
 
+    MPC mpc(mph_to_mps(80.0));
     uWS::Hub h;
 
-    h.onMessage([](
+    h.onMessage([&mpc](
         uWS::WebSocket<uWS::SERVER> ws, 
         char *data, 
         size_t length,
@@ -86,7 +87,7 @@ int main()
         cout << sdata << endl;
 
         if (sdata.size() < 3 || sdata[0] != '4' || sdata[1] != '2') {
-            cout << "unrecognized message" << endl;
+            // cout << "unrecognized message" << endl;
             return;
         } 
         
@@ -103,7 +104,7 @@ int main()
         string event = j[0].get<string>();
 
         if (event != "telemetry") {
-            cout << "ignoring simulator message: " << event << endl;
+            // cout << "ignoring simulator message: " << event << endl;
             return;
         } 
         
@@ -126,15 +127,15 @@ int main()
         CoordFrame2D veh_frame(px, py, psi);
         veh_frame.GlobalToLocal(ptsx.size(), &ptsx[0], &ptsy[0]);
 
-        cout << "Waypoints (veh coords)" << endl;
-        cout << "x:";
-        for (size_t i=0; i < ptsx.size(); i++)
-            cout << " " << ptsx[i];
-        cout << endl;
-        cout << "y:";
-        for (size_t i=0; i < ptsy.size(); i++)
-            cout << " " << ptsy[i];
-        cout << endl;
+        // cout << "Waypoints (veh coords)" << endl;
+        // cout << "x:";
+        // for (size_t i=0; i < ptsx.size(); i++)
+        //     cout << " " << ptsx[i];
+        // cout << endl;
+        // cout << "y:";
+        // for (size_t i=0; i < ptsy.size(); i++)
+        //     cout << " " << ptsy[i];
+        // cout << endl;
         
         // best-fit cubic polynomial trajectory to waypoints
         // Polynomial ref_traj(3, ptsx.size(), &ptsx[0], &ptsy[0]);
@@ -153,15 +154,15 @@ int main()
         }
 
         // working in vehicle coordinates
-        VehicleState veh_state;
+        MPC::VehicleState veh_state;
         veh_state.x = 0;
         veh_state.y = 0;
         veh_state.psi = 0;
         veh_state.v = mph_to_mps(v);
 
-        MPC_Results mpc_results;
+        MPC::Results mpc_results;
 
-        if (MPC_Solve(veh_state, ref_traj, mpc_results))
+        if (mpc.Solve(veh_state, ref_traj, mpc_results))
         {
             steer_value = -mpc_results.steer;
             throttle_value = mpc_results.accel;

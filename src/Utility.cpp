@@ -64,84 +64,70 @@ void CoordFrame2D::LocalToGlobal(size_t count, double *x, double *y) const
     }
 }
 
-// namespace 
-// {
-//     // Fit a polynomial.
-//     // Adapted from
-//     // https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
-//     VectorXd polyfit(
-//         const VectorXd &xvals, 
-//         const VectorXd &yvals,
-//         int degree)
-//     {
-//         assert(xvals.size() == yvals.size());
-//         assert(degree >= 1 && degree <= xvals.size() - 1);
-//         Eigen::MatrixXd A(xvals.size(), degree + 1);
+namespace 
+{
+    // Fit a polynomial.
+    // Adapted from
+    // https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
+    VectorXd polyfit(
+        const VectorXd &xvals, 
+        const VectorXd &yvals,
+        int degree)
+    {
+        assert(xvals.size() == yvals.size());
+        assert(degree >= 1 && degree <= xvals.size() - 1);
+        Eigen::MatrixXd A(xvals.size(), degree + 1);
 
-//         for (int i = 0; i < xvals.size(); i++) {
-//             A(i, 0) = 1.0;
-//         }
+        for (int i = 0; i < xvals.size(); i++) {
+            A(i, 0) = 1.0;
+        }
 
-//         for (int j = 0; j < xvals.size(); j++) {
-//             for (int i = 0; i < degree; i++) {
-//                 A(j, i + 1) = A(j, i) * xvals(j);
-//             }
-//         }
+        for (int j = 0; j < xvals.size(); j++) {
+            for (int i = 0; i < degree; i++) {
+                A(j, i + 1) = A(j, i) * xvals(j);
+            }
+        }
 
-//         return A.householderQr().solve(yvals);
-//     }
-// }
+        return A.householderQr().solve(yvals);
+    }
+}
 
-// Polynomial::Polynomial(
-//     size_t degree,
-//     size_t count,
-//     const double *xvals, 
-//     const double *yvals)
-// {
-//     Map<const VectorXd> mx(xvals, count);
-//     Map<const VectorXd> my(yvals, count);
-//     _coeffs = polyfit(mx, my, degree);
-// }
+Polynomial::Polynomial(
+    size_t degree,
+    size_t count,
+    const double *xvals, 
+    const double *yvals)
+{
+    Map<const VectorXd> mx(xvals, count);
+    Map<const VectorXd> my(yvals, count);
+    _coeffs = polyfit(mx, my, degree);
+}
 
-// // evaluate polynomial
-// double Polynomial::Evaluate(double x) const
-// {
-//     // size_t degree = _coeffs.size() - 1;
-//     // double result = _coeffs[0];
+// evaluate polynomial
+double Polynomial::Evaluate(double x) const
+{
+    size_t degree = _coeffs.size() - 1;
+    double result = 0.0;
 
-//     // if (degree >= 1) {
-//     //     result += x * _coeffs[1];
-//     // }
+    for (size_t i = 0; i <= degree; i++) {
+        result += _coeffs[i] * pow(x, i);
+    }
 
-//     // for (size_t i = 2; i <= degree; i++) {
-//     //     result += pow(x, i) * _coeffs[i];
-//     // }
+    return result;
+}
 
-//     // return result;
-//     return _coeffs[0] + _coeffs[1]*x + _coeffs[2]*x*x + _coeffs[3]*x*x*x;
-// }
+// evaluate polynomial 1st derivative
+double Polynomial::Derivative(double x) const
+{
+    size_t degree = _coeffs.size() - 1;
+    double result = 0.0;
 
-// // evaluate polynomial 1st derivative
-// double Polynomial::Derivative(double x) const
-// {
-//     // size_t degree = _coeffs.size() - 1;
-//     // double result = 0.0;
+    for (size_t i = 1; i <= degree; i++) {
+        result += _coeffs[i] * i * pow(x, i-1);
+    }
 
-//     // if (degree >= 1) {
-//     //     result += _coeffs[1];
-//     // }
-    
-//     // if (degree >= 2) {
-//     //     result += x * 2 * _coeffs[2];
-//     // }
-
-//     // for (size_t i = 3; i <= degree; i++) {
-//     //     result += pow(x, i-1) * i * _coeffs[i];
-//     // }
-
-//     // return result;
-//     return _coeffs[1] + 2*_coeffs[2]*x + 3*_coeffs[3]*x*x;
-// }
+    return result;
+}
 
 // // Evaluate polynomial CppAD expression
 // AD<double> Polynomial::Evaluate(const AD<double> &x) const

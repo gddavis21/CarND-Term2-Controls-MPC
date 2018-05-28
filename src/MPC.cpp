@@ -9,7 +9,7 @@ using CppAD::AD;
 
 // Set the timestep length and duration
 size_t N = 20;
-double D = 50.0;
+// double D = 60.0;
 //double dt = 0.1;
 
 // This value assumes the model presented in the classroom is used.
@@ -24,7 +24,7 @@ double D = 50.0;
 // This is the length from front to CoG that has a similar radius.
 const double Lf = 2.67;
 
-const double ref_velocity = mph_to_mps(30.0);
+//const double ref_velocity = mph_to_mps(100.0);
 //const double ref_velocity = 30.0;
 
 // The solver takes all the state variables and actuator
@@ -44,14 +44,45 @@ class FG_eval
 private:
     // Polynomial _ref_traj;  // reference trajectory
     Eigen::VectorXd _ref_traj;
+    double _ref_velocity;
     double _time_step;
+    double _weight_change_steering, _weight_rate_change_steering;
 
 public:
     // FG_eval(const Polynomial &ref_traj) : _ref_traj(ref_traj) {}
-    FG_eval(const Eigen::VectorXd &ref_traj, double time_step)
+    FG_eval(
+        const Eigen::VectorXd &ref_traj, 
+        double ref_velocity,
+        double velocity, 
+        double time_step)
     {
+        velocity = std::max(velocity, 10.0);
         _ref_traj = ref_traj;
+        _ref_velocity = ref_velocity;
         _time_step = time_step;
+        _weight_change_steering = Weight_ChangeSteering(velocity);
+        _weight_rate_change_steering = Weight_RateChangeSteering(velocity);
+        // _weight_change_steering = 110000;
+        // _weight_rate_change_steering = 55000;
+    }
+
+    static double Weight_ChangeSteering(double velocity)
+    {
+        const double V[4] = { 
+            mph_to_mps(30.0), 
+            mph_to_mps(45.0), 
+            mph_to_mps(60.0), 
+            mph_to_mps(75.0) 
+        };
+        const double W[4] = { 8000, 18000, 50000, 100000 };
+        const size_t DEGREE = 3;
+        static Polynomial weight(DEGREE, 4, &V[0], &W[0]);
+        return weight.Evaluate(velocity);
+    }
+
+    static double Weight_RateChangeSteering(double velocity)
+    {
+        return 0.5 * Weight_ChangeSteering(velocity);
     }
 
     typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
@@ -66,23 +97,27 @@ public:
         // cost is stored in fg[0]
         fg[0] = 0;
 
+        // const double weight_cross_track_error = 15;
+        // const double weight_orientation_error = 15;
+        // const double weight_velocity_error = 1;
+
         // add reference-state cost
         for (size_t t=0; t < N; t++) {
-            fg[0] += 20*CppAD::pow(vars[cte_start + t], 2);
-            fg[0] += 20*CppAD::pow(vars[epsi_start + t], 2);
-            fg[0] += CppAD::pow(vars[v_start + t] - ref_velocity, 2);
+            fg[0] += CppAD::pow(vars[cte_start + t], 2);
+            fg[0] += CppAD::pow(vars[epsi_start + t], 2);
+            fg[0] += 0.5*CppAD::pow(vars[v_start + t] - _ref_velocity, 2);
         }
 
         // penalize actuator changes
         for (size_t t=0; t < N-1; t++) {
-            fg[0] += 5000*CppAD::pow(vars[delta_start + t], 2);
-            fg[0] += 50*CppAD::pow(vars[a_start + t], 2);
+            fg[0] += _weight_change_steering*CppAD::pow(vars[delta_start + t], 2);
+            fg[0] += 15*CppAD::pow(vars[a_start + t], 2);
         }
 
-        // penalize rate of actuator changes
+        // penalize rates of actuator changes
         for (size_t t=0; t < N-2; t++) {
-            fg[0] += 5000*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-            fg[0] += 10*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+            fg[0] += _weight_rate_change_steering*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+            fg[0] += 20*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
         }
 
         //
@@ -151,31 +186,51 @@ public:
     }
 };
 
-// options for IPOPT solver
-std::string SolverOptions()
+namespace
 {
-    std::string options;
-    // Uncomment this if you'd like more print information
-    options += "Integer print_level  0\n";
-    // NOTE: Setting sparse to true allows the solver to take advantage
-    // of sparse routines, this makes the computation MUCH FASTER. If you
-    // can uncomment 1 of these and see if it makes a difference or not but
-    // if you uncomment both the computation time should go up in orders of
-    // magnitude.
-    options += "Sparse  true        forward\n";
-    options += "Sparse  true        reverse\n";
-    // NOTE: Currently the solver has a maximum time limit of 0.5 seconds.
-    // Change this as you see fit.
-    options += "Numeric max_cpu_time          0.5\n";
+    // options for IPOPT solver
+    std::string SolverOptions()
+    {
+        std::string options;
+        // Uncomment this if you'd like more print information
+        options += "Integer print_level  0\n";
+        // NOTE: Setting sparse to true allows the solver to take advantage
+        // of sparse routines, this makes the computation MUCH FASTER. If you
+        // can uncomment 1 of these and see if it makes a difference or not but
+        // if you uncomment both the computation time should go up in orders of
+        // magnitude.
+        options += "Sparse  true        forward\n";
+        options += "Sparse  true        reverse\n";
+        // NOTE: Currently the solver has a maximum time limit of 0.5 seconds.
+        // Change this as you see fit.
+        options += "Numeric max_cpu_time          0.5\n";
 
-    return options;
+        return options;
+    }
+
+    double PredDist(double ref_velocity)
+    {
+        const double V[] = { 
+            mph_to_mps(40.0), 
+            mph_to_mps(100.0) 
+        };
+        const double D[] = { 40.0, 70.0 };
+        const size_t LINEAR = 1;
+        static Polynomial distFunc(LINEAR, 2, &V[0], &D[0]);
+        return distFunc.Evaluate(ref_velocity);
+    }
 }
 
-bool MPC_Solve(
+MPC::MPC(double ref_velocity)
+{
+    _ref_velocity = ref_velocity;
+}
+
+bool MPC::Solve(
     const VehicleState &state, 
     //const Polynomial &ref_traj,
     const Eigen::VectorXd &ref_traj,
-    MPC_Results &results) 
+    Results &results) const
 {
     typedef CPPAD_TESTVECTOR(double) Dvector;
 
@@ -264,8 +319,8 @@ bool MPC_Solve(
     constraints_upperbound[epsi_start] = epsi;
 
     // object that computes objective and constraints
-    double time_step = D / (N*std::max(v,1.0));
-    FG_eval fg_eval(ref_traj, time_step);
+    double time_step = PredDist(_ref_velocity) / (N*std::max(v,1.0));
+    FG_eval fg_eval(ref_traj, _ref_velocity, v, time_step);
 
     // solve the problem
     CppAD::ipopt::solve_result<Dvector> solution;

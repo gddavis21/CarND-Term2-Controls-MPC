@@ -28,26 +28,26 @@ private:
     double _xoffs, _yoffs, _cosA, _sinA;
 };
 
-// class Polynomial 
-// {
-// public:
-//     Polynomial(
-//         size_t degree,
-//         size_t count,
-//         const double *xvals, 
-//         const double *yvals);
+class Polynomial 
+{
+public:
+    Polynomial(
+        size_t degree,
+        size_t count,
+        const double *xvals, 
+        const double *yvals);
 
-//     // evaluate polynomial at x
-//     double Evaluate(double x) const;
+    // evaluate polynomial at x
+    double Evaluate(double x) const;
 
-//     // evaluate polynomial 1st derivative at x
-//     double Derivative(double x) const;
+    // evaluate polynomial 1st derivative at x
+    double Derivative(double x) const;
 
-//     CppAD::AD<double> Evaluate(const CppAD::AD<double> &x) const;
-//     CppAD::AD<double> Derivative(const CppAD::AD<double> &x) const;
+    // CppAD::AD<double> Evaluate(const CppAD::AD<double> &x) const;
+    // CppAD::AD<double> Derivative(const CppAD::AD<double> &x) const;
 
-// private:
-//     Eigen::VectorXd _coeffs;
-// };
+private:
+    Eigen::VectorXd _coeffs;
+};
 
 #endif /* UTILITY_H */
