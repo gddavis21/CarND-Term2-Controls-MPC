@@ -36,8 +36,6 @@ public:
         std::vector<double> &pred_traj_y) const;
 
 private:
-    static double PredRange(double ref_velocity);
-
     VehicleState AdjustForLatency(
         const VehicleState &current_state,
         const VehicleActuators &current_actuators,

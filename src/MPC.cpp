@@ -7,7 +7,9 @@
 using namespace std;
 using CppAD::AD;
 
-const size_t N = 20;  // Number of time-steps to predict
+const size_t N = 20;            // Number of time-steps to predict
+const double H = 2.0;           // prediction horizon (seconds)
+const double PRED_STEP = H/N;   // prediction time-step (seconds)
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
@@ -28,7 +30,6 @@ private:
     // Polynomial _ref_traj;  // reference trajectory
     Eigen::VectorXd _ref_traj;
     double _ref_velocity;
-    double _time_step;
     double _weight_change_steering, _weight_rate_change_steering;
 
 public:
@@ -37,17 +38,15 @@ public:
         double Lf,  // vehicle length parameter
         const Eigen::VectorXd &ref_traj, 
         double ref_velocity,
-        double velocity, 
-        double time_step)
+        double cur_velocity)
     {
         _Lf = Lf;
         _ref_traj = ref_traj;
         _ref_velocity = ref_velocity;
-        _time_step = time_step;
 
-        velocity = std::max(velocity, 10.0);
-        _weight_change_steering = Weight_ChangeSteering(velocity);
-        _weight_rate_change_steering = Weight_RateChangeSteering(velocity);
+        cur_velocity = std::max(cur_velocity, 10.0);
+        _weight_change_steering = Weight_ChangeSteering(cur_velocity);
+        _weight_rate_change_steering = Weight_RateChangeSteering(cur_velocity);
     }
 
     static double Weight_ChangeSteering(double velocity)
@@ -121,7 +120,7 @@ public:
         fg[1 + cte_start] = vars[cte_start];
         fg[1 + epsi_start] = vars[epsi_start];
 
-        double dt = _time_step;
+        double dt = PRED_STEP;
 
         // The rest of the constraints
         for (size_t t = 1; t < N; t++) 
@@ -322,9 +321,7 @@ bool MPC::Predict(
     constraints_upperbound[epsi_start] = epsi;
 
     // object that computes objective and constraints
-    double pred_range = PredRange(ref_velocity);
-    double time_step = pred_range / (N*std::max(v,1.0));
-    CostFunc costFunc(_Lf, ref_traj, ref_velocity, v, time_step);
+    CostFunc costFunc(_Lf, ref_traj, ref_velocity, v);
 
     // solve the problem
     CppAD::ipopt::solve_result<Dvector> solution;
@@ -360,17 +357,4 @@ bool MPC::Predict(
     }
 
     return true;
-}
-
-double MPC::PredRange(double ref_velocity)
-{
-    // compute prediction range distance as a function of velocity
-    const double V[] = { 
-        mph_to_mps(40.0), 
-        mph_to_mps(100.0) 
-    };
-    const double D[] = { 40.0, 70.0 };
-    static Polynomial rangeModel(1, 2, &V[0], &D[0]);
-    double range = rangeModel.Evaluate(ref_velocity);
-    return clamp(range, 20.0, 80.0);
 }
