@@ -66,12 +66,26 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
   return result;
 }
 
+// This value assumes the model presented in the classroom is used.
+//
+// It was obtained by measuring the radius formed by running the vehicle in the
+// simulator around in a circle with a constant steering angle and velocity on a
+// flat terrain.
+//
+// Lf was tuned until the the radius formed by the simulating the model
+// presented in the classroom matched the previous radius.
+//
+// This is the length from front to CoG that has a similar radius.
+const double Lf = 2.67;
+
+const double REF_VELOCITY = mph_to_mps(80.0);  // 80 MPH
+
 int main() 
 {
-    const unsigned int LATENCY_ms = 0;
+    const unsigned int LATENCY_ms = 100;
     const bool VISUALIZE = true;
 
-    MPC mpc(mph_to_mps(80.0));
+    MPC mpc(Lf);
     uWS::Hub h;
 
     h.onMessage([&mpc](
@@ -108,40 +122,42 @@ int main()
             return;
         } 
         
-        // extract input data from simulator
+        // extract input data from simulator message
         // j[1] is the data JSON object
-        vector<double> ptsx = j[1]["ptsx"];     // waypoints x values
-        vector<double> ptsy = j[1]["ptsy"];     // waypoints y values
+        vector<double> waypts_x = j[1]["ptsx"];     // waypoints x values
+        vector<double> waypts_y = j[1]["ptsy"];     // waypoints y values
         double px = j[1]["x"];                  // vehicle current x position
         double py = j[1]["y"];                  // vehicle current y position
         double psi = j[1]["psi"];               // vehicle current orientation
-        double v = j[1]["speed"];               // vehicle current velocity
+        double speed = j[1]["speed"];               // vehicle current velocity
+        double steering_angle = j[1]["steering_angle"];
+        double throttle = j[1]["throttle"];
 
-        // output data we'll send back to simulator
-        double steer_value = 0;
-        double throttle_value = 0;
-        vector<double> ref_traj_x, ref_traj_y;  // reference trajectory
-        vector<double> mpc_traj_x, mpc_traj_y;  // predicted trajectory
+        VehicleState veh_state = { px, py, psi, mph_to_mps(speed) };
+        VehicleActuators veh_actuators = { -steering_angle, throttle };
+
+        size_t n_waypts = waypts_x.size();
 
         // transform waypoints from map to vehicle coordinates
-        CoordFrame2D veh_frame(px, py, psi);
-        veh_frame.GlobalToLocal(ptsx.size(), &ptsx[0], &ptsy[0]);
+        CoordFrame2D veh_frame(veh_state.x, veh_state.y, veh_state.psi);
+        veh_frame.GlobalToLocal(n_waypts, &waypts_x[0], &waypts_y[0]);
 
-        // cout << "Waypoints (veh coords)" << endl;
-        // cout << "x:";
-        // for (size_t i=0; i < ptsx.size(); i++)
-        //     cout << " " << ptsx[i];
-        // cout << endl;
-        // cout << "y:";
-        // for (size_t i=0; i < ptsy.size(); i++)
-        //     cout << " " << ptsy[i];
-        // cout << endl;
-        
+        // transform vehicle state to vehicle coordinates
+        veh_state.x = 0;
+        veh_state.y = 0;
+        veh_state.psi = 0;
+
         // best-fit cubic polynomial trajectory to waypoints
         // Polynomial ref_traj(3, ptsx.size(), &ptsx[0], &ptsy[0]);
-        Eigen::Map<Eigen::VectorXd> mx(&ptsx[0], ptsx.size());
-        Eigen::Map<Eigen::VectorXd> my(&ptsy[0], ptsx.size());
+        Eigen::Map<Eigen::VectorXd> mx(&waypts_x[0], n_waypts);
+        Eigen::Map<Eigen::VectorXd> my(&waypts_y[0], n_waypts);
         Eigen::VectorXd ref_traj = polyfit(mx, my, 3);
+
+        // output data we'll send back to simulator
+        vector<double> ref_traj_x, ref_traj_y;  // reference trajectory
+        vector<double> mpc_traj_x, mpc_traj_y;  // predicted trajectory
+        double steer_value = 0;
+        double throttle_value = 0;
 
         if (VISUALIZE)
         {
@@ -153,24 +169,27 @@ int main()
             }
         }
 
-        // working in vehicle coordinates
-        MPC::VehicleState veh_state;
-        veh_state.x = 0;
-        veh_state.y = 0;
-        veh_state.psi = 0;
-        veh_state.v = mph_to_mps(v);
+        // MPC result data
+        VehicleActuators pred_actuators;
+        vector<double> pred_traj_x, pred_traj_y;
 
-        MPC::Results mpc_results;
-
-        if (mpc.Solve(veh_state, ref_traj, mpc_results))
+        if (mpc.Predict(
+            ref_traj, 
+            REF_VELOCITY, 
+            veh_state, 
+            veh_actuators, 
+            LATENCY_ms/1000.0,
+            pred_actuators, 
+            pred_traj_x, 
+            pred_traj_y))
         {
-            steer_value = -mpc_results.steer;
-            throttle_value = mpc_results.accel;
+            steer_value = -pred_actuators.steer;
+            throttle_value = pred_actuators.accel;
 
             if (VISUALIZE)
             {
-                mpc_traj_x = mpc_results.traj_x;
-                mpc_traj_y = mpc_results.traj_y;
+                mpc_traj_x = pred_traj_x;
+                mpc_traj_y = pred_traj_y;
             }
         }
 
@@ -181,7 +200,7 @@ int main()
         // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
         // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
         msgJson["steering_angle"] = steer_value / deg_to_rad(25);
-        msgJson["throttle"] = throttle_value;
+        msgJson["throttle"] = clamp(throttle_value, -1.0, 1.0);
 
         //Display the MPC predicted trajectory 
 

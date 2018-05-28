@@ -5,62 +5,45 @@
 #include "Eigen/Dense"
 #include "Utility.h"
 
-// struct VehicleState
-// {
-//     double x;
-//     double y;
-//     double psi;
-//     double v;
-// };
+struct VehicleState
+{
+    double x;
+    double y;
+    double psi;
+    double v;
+};
 
-// struct MPC_Results
-// {
-//     double steer;
-//     double accel;
-//     std::vector<double> traj_x;
-//     std::vector<double> traj_y;
-// };
-
-// // Solve the model given an initial state and polynomial trajectory.
-// // Return the first actuations.
-// bool MPC_Solve(
-//     const VehicleState &state, 
-//     //const Polynomial &ref_traj,
-//     const Eigen::VectorXd &ref_traj,
-//     MPC_Results &results);
+struct VehicleActuators
+{
+    double steer;
+    double accel;
+};
 
 class MPC
 {
 public:
-    MPC(double ref_velocity);
+    MPC(double Lf);
 
-    struct VehicleState
-    {
-        double x;
-        double y;
-        double psi;
-        double v;
-    };
-
-    struct Results 
-    {
-        double steer;
-        double accel;
-        std::vector<double> traj_x;
-        std::vector<double> traj_y;
-    };
-
-    bool Solve(
-        const VehicleState &state, 
+    bool Predict(
         //const Polynomial &ref_traj,
         const Eigen::VectorXd &ref_traj,
-        Results &results) const;
+        double ref_velocity,
+        const VehicleState &current_state, 
+        const VehicleActuators &current_actuators,
+        double latency,
+        VehicleActuators &pred_actuators,
+        std::vector<double> &pred_traj_x,
+        std::vector<double> &pred_traj_y) const;
 
 private:
-    double _ref_velocity;
-    double _fwd_proj_dist;
-    Eigen::VectorXd _weight_coeff_change_steer;
-    Eigen::VectorXd _weight_coeff_rate_change_steer;
+    static double PredRange(double ref_velocity);
+
+    VehicleState AdjustForLatency(
+        const VehicleState &current_state,
+        const VehicleActuators &current_actuators,
+        double latency) const;
+
+    double _Lf;
 };
 
 #endif /* MPC_H */

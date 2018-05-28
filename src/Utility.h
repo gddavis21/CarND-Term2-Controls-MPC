@@ -5,6 +5,11 @@
 #include "Eigen/Dense"
 #include <cppad/cppad.hpp>
 
+inline double clamp(double x, double lo, double hi)
+{
+    return std::max(lo, std::min(x, hi));
+}
+
 // conversions between degrees and radians
 double deg_to_rad(double deg);
 double rad_to_deg(double rad);
