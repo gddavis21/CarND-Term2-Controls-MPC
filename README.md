@@ -49,24 +49,39 @@ Model state update equations are as follows:
     + Best-fit a cubic polynomial to vehicle-relative waypoints, using standard polynomial regression. The resulting polynomial is used as the reference (desired) trajectory for the vehicle.
     + Transform vehicle state to vehicle coordinates. This is easy--vehicle position and orientation are simply set to zero!
   * MPC prediction:
-    + Compensate vehicle state for actuator latency. More on this later.
+    + Compensate vehicle state for actuator latency.
     + Compute initial cross-track error and orientation error.
     + Utilize Ipopt/CppAD libraries to setup and solve MPC nonlinear optimization problem.
   * Return optimized 1st time-step actuator values to simulator.
     
 ## Implementation Details
 
-Choosing horizon-time and time-step:
-  * An important part of solving the MPC optimization problem is choosing the time-step duration and number of time steps to solve for.
+Choosing time-step duration, number of steps, etc:
+  * An important part of solving the MPC optimization problem is choosing the time-step duration (dt), the number of time steps to solve for (N), and the total prediction time (I call this H = time to horizon). Note that since H = N*dt, this is actually a choice of 2 parameters, and the 3rd is implied.
   * There are multiple considerations to balance:
-    - Time-step duration is directly related to precision of control. Shorter time-steps make for better control.
-    - Sufficient total prediction time (time to horizon) is necessary for MPC to effectively model the relationship between actuator changes and future state.
-    - More time steps mean more time to solve the MPC optimization problem. We have limited compute resources and limited time to execute the algorithm.
-  * I found that allowing 2 seconds for total prediction time is an effective setting at every reference velocity I tested (30-100 MPH).
+    - Sufficient time to horizon is necessary for MPC to effectively model the relationship between actuator changes and future state.
+    - More time steps mean more computation time to solve the MPC optimization problem. Since the algorithm must run quickly, the number of time steps must be limited to a number appropriate to compute resources present.
+    - At first I assumed that shorter time-step duration would contribute to more precise control, but in practice it was important to choose the other 2 parameters (and let time-step duration be determined dt = H/N).
+  * I found that allowing 2 seconds for time to horizon is an effective setting at every reference velocity I tested (30-100 MPH).
+    - At slower speeds (30-40 MPH) this could be decreased to 1 second, but as the speed increased it was necessary to increase this parameter.
+    - I didn't find much/any advantage in decreasing time to horizon, so I just left it at a fixed 2 seconds.
   * I found that running the optimization solver over 20 time steps results in a reasonable compute load on my development PC.
-  
+    - I did test at other values like 10 or 15 time steps. At higher speeds the controller worked better with more time steps, so I left it at 20.
+    - In a real-world setting I think it would be important to calibrate compute performance and adjust this parameter accordingly.
+  * Because I explicitly chose the previous 2 values, the time-step duration for my algorithm is set at 0.1 seconds (2 sec / 20 steps).
 
+Accounting for actuator latency:
+  * The project requires simulating actuator latency by delaying for 100ms before sending the computed actuator values back to the simulator.
+  * My implementation compensates for latency by modeling the change in vehicle state over the latency time before solving the MPC optimization.
+    - Start with current vehicle state and actuator values reported by the simulator (call this time t0).
+    - Compute vehicle state at time t = t0 + latency (using the kinematic model update equations).
+    - Use this latency compensated vehicle state as the initial input state to the MPC optimization.
+  * My reasoning for this technique is as follows:
+    - Due to latency, the simulator will be delayed in applying the actuator changes computed by MPC.
+    - The algorithm can model this latency by solving the MPC problem over a future time window. The time window we want to solve for is offset into the future by the latency time. 
+    - Thus we need to "seed" the solver with the (approximate) vehicle state at time now + latency.
 
+MPC optimization cost function:
 
 ## Dependencies
 
