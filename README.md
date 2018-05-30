@@ -56,7 +56,7 @@ Model state update equations are as follows:
     
 ## Implementation Details
 
-Choosing time-step duration, number of steps, etc:
+### Choosing time-step duration, number of steps, etc:
   * An important part of solving the MPC optimization problem is choosing the time-step duration (dt), the number of time steps to solve for (N), and the total prediction time (I call this H = time to horizon). Note that since H = N*dt, this is actually a choice of 2 parameters, and the 3rd is implied.
   * There are multiple considerations to balance:
     - Sufficient time to horizon is necessary for MPC to effectively model the relationship between actuator changes and future state.
@@ -70,18 +70,60 @@ Choosing time-step duration, number of steps, etc:
     - In a real-world setting I think it would be important to calibrate compute performance and adjust this parameter accordingly.
   * Because I explicitly chose the previous 2 values, the time-step duration for my algorithm is set at 0.1 seconds (2 sec / 20 steps).
 
-Accounting for actuator latency:
-  * The project requires simulating actuator latency by delaying for 100ms before sending the computed actuator values back to the simulator.
-  * My implementation compensates for latency by modeling the change in vehicle state over the latency time before solving the MPC optimization.
-    - Start with current vehicle state and actuator values reported by the simulator (call this time t0).
-    - Compute vehicle state at time t = t0 + latency (using the kinematic model update equations).
-    - Use this latency compensated vehicle state as the initial input state to the MPC optimization.
-  * My reasoning for this technique is as follows:
-    - Due to latency, the simulator will be delayed in applying the actuator changes computed by MPC.
-    - The algorithm can model this latency by solving the MPC problem over a future time window. The time window we want to solve for is offset into the future by the latency time. 
-    - Thus we need to "seed" the solver with the (approximate) vehicle state at time now + latency.
+### MPC Optimizer cost function & parameter tuning:
 
-MPC optimization cost function:
+The MPC optimization cost function is a simple sum of weighted squares.
+  * Minimize error:
+    - Sum of weighted squared cross-track errors
+    - Sum of weighted squared orientation errors
+    - Sum of weighted squared deviations of velocity from reference velocity
+  * Smooth/penalize actuator changes:
+    - Sum of weighted squared steering angle values
+    - Sum of weighted squared throttle values
+  * Smooth/penalize rate of actuator changes:
+    - Sum of weighted squared steering changes (between consecutive time steps)
+    - Sum of weighted squared throttle changes (between consecutive time steps)
+
+In summary, the cost function is designed to compute small magnitude, smoothly changing actuation values that maintain small errors in position, orientation and velocity. Other than the weight values, this cost function is identical to what was recommended in the MPC lesson and practice assignment. 
+
+Choosing and tuning the cost function weight parameters was a critical aspect of achieving good algorithm performance for this project.
+  * I found it was effective to use the same weight for cross-track and orientation error terms, and set the velocity term weight to half the cross-track weight.
+    - This does seem to keep vehicle velocity well below reference velocity--it tops out around 75% of reference.
+    - I believe with further tuning of weights we could increase the velocity term weight and maintain control. I just ran out of time for the project and left this at a reasonably functional value.
+  * Weights for throttle values and rate of throttle changes are both set to around 15-20x the cross-track weight. This setting was effective at every velocity I tested.
+  * Algorithm performance is highly sensitive to the steering value and rate of steering change weights.
+    - These weights are several orders of magnitude larger than the cross-track error weight.
+    - It worked very well to always set the rate of steering change weight to exactly half the steering value weight.
+    - Good values for these 2 weight parameters seem to be highly dependent on the vehicle velocity. I found that they need to be scaled up (non-linearly) with increased velocity.
+    - I wanted my algorithm to be robust to different reference velocities. My solution is as follows:
+      + I trial & error tuned the steering value weight while driving at 4 different example speeds (30, 45, 60, 75 MPH).
+      + In the final algorithm I fit a polynomial model to these (speed, weight) samples.
+      + The MPC optimizer uses this model to re-compute a steering value weight on every iteration, given the current vehicle velocity.
+      + The rate of steering change weight is always half the computed steering value weight.
+
+### Accounting for actuator latency:
+
+The project requires simulating actuator latency by delaying for 100ms before sending the computed actuator values back to the simulator.
+
+My implementation compensates for latency by modeling the change in vehicle state over the latency time before solving the MPC optimization.
+  - Start with current vehicle state and actuator values reported by the simulator (call this time t0).
+  - Compute vehicle state at time t = t0 + latency (using the kinematic model update equations).
+  - Use this latency compensated vehicle state as the initial input state to the MPC optimization.
+
+My reasoning for this technique is as follows:
+  - Due to latency, the simulator will be delayed in applying the actuator changes computed by MPC.
+  - The algorithm can model this latency by solving the MPC problem over a future time window. The time window we want to solve for is offset into the future by the latency time. 
+  - Thus we need to "seed" the solver with the (approximate) vehicle state at time t = now + latency.
+
+### Other observations/reflections:
+
+My main reservation with the techniques used in this project are around the use of simple cubic polynomials to model the reference trajectories.
+  * The explicit y=f(x) polynomial approximation is adequate as long as the trajectory remains relatively parallel to the vehicle orientation.
+  * However, problems occur if/when the trajectory diverges from vehicle orientation. This happens when either the trajectory has a sharp turn, or the vehicle (wrongly) veers away from reference trajectory. In these cases the "slope" of the cubic polynomial becomes steep, leading to numerical instability in the explicit y=f(x) function.
+  * A much better solution for the trajectory would be to compute a parametric curve (B-spline, Bezier spline, etc.) or non-parametric curve (smoothing spline, thin-plate spline). These are designed to model 2D curves without the difficulties of using explicit functions. Of course, they're also more complex mathematically and were definitely out-of-scope for completing this project on time.
+
+Overall, I was very impressed with the effectiveness of the MPC approach compared with the PID controller approach we implemented for the previous project. I was able to safely "drive" my vehicle at 3x the speed with much less time spent tuning the controller.
+
 
 ## Dependencies
 
