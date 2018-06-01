@@ -18,6 +18,7 @@ double rad_to_deg(double rad);
 double mph_to_mps(double mph);
 double mps_to_mph(double mps);
 
+// Apply rigid-body transformation
 class CoordFrame2D
 {
 public:
@@ -36,6 +37,7 @@ private:
 class Polynomial 
 {
 public:
+    // best-fit polynomial to sample data (simple polynomial regression)
     Polynomial(
         size_t degree,
         size_t count,
@@ -51,8 +53,25 @@ public:
     // CppAD::AD<double> Evaluate(const CppAD::AD<double> &x) const;
     // CppAD::AD<double> Derivative(const CppAD::AD<double> &x) const;
 
+    Eigen::VectorXd GetCoefficients() const;
+
 private:
     Eigen::VectorXd _coeffs;
+};
+
+class LinearInterpolator1D
+{
+public:
+    LinearInterpolator1D(
+        size_t count, 
+        const double *xvals, 
+        const double *yvals);
+
+    double Interpolate(double x) const;
+
+private:
+    std::vector<double> _xvals;
+    std::vector<double> _yvals;
 };
 
 #endif /* UTILITY_H */

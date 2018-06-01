@@ -2,7 +2,6 @@
 #define MPC_H
 
 #include <vector>
-#include "Eigen/Dense"
 #include "Utility.h"
 
 struct VehicleState
@@ -19,29 +18,24 @@ struct VehicleActuators
     double accel;
 };
 
-class MPC
-{
-public:
-    MPC(double Lf);
+// Use kinematic model to predict future vehicle state, given initial 
+// state and actuator values.
+VehicleState PredictVehicleState(
+    const VehicleState &initial_state,      // initial vehicle state
+    const VehicleActuators &actuators,      // current steering & throttle values
+    double Lf,                              // vehicle length parameter
+    double dt);                             // prediction delay (in seconds)
 
-    bool Predict(
-        //const Polynomial &ref_traj,
-        const Eigen::VectorXd &ref_traj,
-        double ref_velocity,
-        const VehicleState &current_state, 
-        const VehicleActuators &current_actuators,
-        double latency,
-        VehicleActuators &pred_actuators,
-        std::vector<double> &pred_traj_x,
-        std::vector<double> &pred_traj_y) const;
-
-private:
-    VehicleState AdjustForLatency(
-        const VehicleState &current_state,
-        const VehicleActuators &current_actuators,
-        double latency) const;
-
-    double _Lf;
-};
+// Apply Model Predictive Control optimization to compute optimal updates
+// to steering angle and throttle, given a reference trajectory, reference
+// velocity and initial vehicle state.
+bool MPC_UpdateActuators(
+    const Polynomial &ref_traj,             // reference trajectory (m)
+    double ref_velocity,                    // reference velocity (m/s)
+    double Lf,                              // vehicle length parameter
+    const VehicleState &initial_state,      // initial vehicle state
+    VehicleActuators &pred_actuators,       // output steering & throttle
+    std::vector<double> &pred_traj_x,       // output predicted x position
+    std::vector<double> &pred_traj_y);      // output predicted y position
 
 #endif /* MPC_H */

@@ -3,13 +3,17 @@
 #include <cfloat>
 #include <cppad/cppad.hpp>
 #include <cppad/ipopt/solve.hpp>
+#include "Eigen/Dense"
 
 using namespace std;
+using namespace Eigen;
 using CppAD::AD;
 
 const size_t N = 20;            // Number of time-steps to predict
-const double H = 2.0;           // prediction horizon (seconds)
-const double PRED_STEP = H/N;   // prediction time-step (seconds)
+// const double H = 3.0;           // prediction horizon (seconds)
+// const double PRED_STEP = H/N;   // prediction time-step (seconds)
+
+const double H = 80.0;  // horizon in meters
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
@@ -27,45 +31,55 @@ class CostFunc
 {
 private:
     double _Lf;
-    // Polynomial _ref_traj;  // reference trajectory
-    Eigen::VectorXd _ref_traj;
-    double _ref_velocity;
-    double _weight_change_steering, _weight_rate_change_steering;
+    const Polynomial &_ref_traj;  // reference trajectory
+    double _ref_velocity, _cur_velocity;
+    double _weight_steering_angle, _weight_rate_change_steering;
 
 public:
-    // FG_eval(const Polynomial &ref_traj) : _ref_traj(ref_traj) {}
     CostFunc(
         double Lf,  // vehicle length parameter
-        const Eigen::VectorXd &ref_traj, 
+        const Polynomial &ref_traj,
         double ref_velocity,
-        double cur_velocity)
+        double cur_velocity) : _ref_traj(ref_traj)
     {
         _Lf = Lf;
-        _ref_traj = ref_traj;
         _ref_velocity = ref_velocity;
+        _cur_velocity = std::max(cur_velocity, mph_to_mps(10));
 
-        cur_velocity = std::max(cur_velocity, 10.0);
-        _weight_change_steering = Weight_ChangeSteering(cur_velocity);
-        _weight_rate_change_steering = Weight_RateChangeSteering(cur_velocity);
+        _weight_steering_angle = Weight_SteeringAngle(_cur_velocity);
+        _weight_rate_change_steering = Weight_RateChangeSteering(_cur_velocity);
     }
 
-    static double Weight_ChangeSteering(double velocity)
+    // compute velocity-adaptive weight parameter for steering angle cost term
+    static double Weight_SteeringAngle(double velocity)
     {
-        const double V[4] = { 
-            mph_to_mps(30.0), 
-            mph_to_mps(45.0), 
-            mph_to_mps(60.0), 
-            mph_to_mps(75.0) 
+        const double V[] = {
+            mph_to_mps(10),
+            mph_to_mps(40),
+            mph_to_mps(55),
+            mph_to_mps(70),
+            mph_to_mps(85),
+            mph_to_mps(100)
         };
-        const double W[4] = { 8000, 18000, 50000, 100000 };
-        const size_t DEGREE = 3;
-        static Polynomial weight(DEGREE, 4, &V[0], &W[0]);
-        return weight.Evaluate(velocity);
+        const double W[] = { 1000, 4000, 40000, 100000, 210000, 360000 };
+        static LinearInterpolator1D weight(6, &V[0], &W[0]);
+        return weight.Interpolate(velocity);
     }
 
+    // compute velocity-adaptive weight parameter for rate of steering change
     static double Weight_RateChangeSteering(double velocity)
     {
-        return 0.5 * Weight_ChangeSteering(velocity);
+        const double V[] = {
+            mph_to_mps(10),
+            mph_to_mps(40),
+            mph_to_mps(55),
+            mph_to_mps(70),
+            mph_to_mps(85),
+            mph_to_mps(100)
+        };
+        const double W[] = { 1000, 4000, 40000, 100000, 210000, 360000 };
+        static LinearInterpolator1D weight(6, &V[0], &W[0]);
+        return weight.Interpolate(velocity);
     }
 
     typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
@@ -80,27 +94,25 @@ public:
         // cost is stored in fg[0]
         fg[0] = 0;
 
-        // const double weight_cross_track_error = 15;
-        // const double weight_orientation_error = 15;
-        // const double weight_velocity_error = 1;
-
         // add reference-state cost
         for (size_t t=0; t < N; t++) {
-            fg[0] += CppAD::pow(vars[cte_start + t], 2);
-            fg[0] += CppAD::pow(vars[epsi_start + t], 2);
-            fg[0] += 0.5*CppAD::pow(vars[v_start + t] - _ref_velocity, 2);
+            double k = 0.3;
+            double w = 1.0 + k*(1.0 - 2*double(t)/(N-1));
+            fg[0] += w*CppAD::pow(vars[cte_start + t], 2);
+            fg[0] += w*CppAD::pow(vars[epsi_start + t], 2);
+            fg[0] += 0.1*CppAD::pow(vars[v_start + t] - _ref_velocity, 2);
         }
 
         // penalize actuator changes
         for (size_t t=0; t < N-1; t++) {
-            fg[0] += _weight_change_steering*CppAD::pow(vars[delta_start + t], 2);
-            fg[0] += 15*CppAD::pow(vars[a_start + t], 2);
+            fg[0] += _weight_steering_angle*CppAD::pow(vars[delta_start + t], 2);
+            fg[0] += 0.1*CppAD::pow(vars[a_start + t], 2);
         }
 
         // penalize rates of actuator changes
         for (size_t t=0; t < N-2; t++) {
             fg[0] += _weight_rate_change_steering*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-            fg[0] += 20*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+            fg[0] += 0.5*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
         }
 
         //
@@ -120,7 +132,10 @@ public:
         fg[1 + cte_start] = vars[cte_start];
         fg[1 + epsi_start] = vars[epsi_start];
 
-        double dt = PRED_STEP;
+        //double dt = PRED_STEP;
+        double T = H/_cur_velocity;
+        double dt = T/N;
+        VectorXd C = _ref_traj.GetCoefficients();
 
         // The rest of the constraints
         for (size_t t = 1; t < N; t++) 
@@ -146,10 +161,8 @@ public:
             AD<double> del0 = vars[delta_start + t - 1];
             AD<double> a0 = vars[a_start + t - 1];
 
-            // AD<double> f0 = _ref_traj.Evaluate(x0);
-            AD<double> f0 = _ref_traj[0] + _ref_traj[1]*x0 + _ref_traj[2]*x0*x0 + _ref_traj[3]*x0*x0*x0;
-            // AD<double> psides0 = CppAD::atan(_ref_traj.Derivative(x0));
-            AD<double> psides0 = CppAD::atan(_ref_traj[1] + 2*_ref_traj[2]*x0 + 3*_ref_traj[3]*x0*x0);
+            AD<double> f0 = C[0] + C[1]*x0 + C[2]*x0*x0 + C[3]*x0*x0*x0;
+            AD<double> psides0 = CppAD::atan(C[1] + 2*C[2]*x0 + 3*C[3]*x0*x0);
 
             // Here's `x` to get you started.
             // The idea here is to constraint this value to be 0.
@@ -192,64 +205,51 @@ namespace
     }
 }
 
-MPC::MPC(double Lf) : _Lf(Lf)
+VehicleState PredictVehicleState(
+    const VehicleState &initial_state,
+    const VehicleActuators &actuators,
+    double Lf,
+    double dt)
 {
-}
+    VehicleState pred_state = initial_state;
 
-VehicleState MPC::AdjustForLatency(
-    const VehicleState &current_state,
-    const VehicleActuators &current_actuators,
-    double latency) const
-{
-    double psi = current_state.psi;
-    double v = current_state.v;
-    double del = current_actuators.steer;
-    double a = current_actuators.accel;
-    double dt = std::max(latency, 0.0);
+    if (dt > 0.0)
+    {
+        double psi = initial_state.psi;
+        double v = initial_state.v;
+        double s = actuators.steer;
+        double a = actuators.accel;
         
-    VehicleState adj_state = current_state;
-
-    if (dt > 0.0) {
-        adj_state.x += v*cos(psi)*dt;
-        adj_state.y += v*sin(psi)*dt;
-        adj_state.psi += v*del*dt/_Lf;
-        adj_state.v += a*dt;
+        pred_state.x += v*cos(psi)*dt;
+        pred_state.y += v*sin(psi)*dt;
+        pred_state.psi += v*s*dt/Lf;
+        pred_state.v += a*dt;
     }
 
-    return adj_state;
+    return pred_state;
 }
 
-bool MPC::Predict(
-    //const Polynomial &ref_traj,
-    const Eigen::VectorXd &ref_traj,
+bool MPC_UpdateActuators(
+    const Polynomial &ref_traj,
     double ref_velocity,
-    const VehicleState &current_state, 
-    const VehicleActuators &current_actuators,
-    double latency,
+    double Lf,  // vehicle length parameter
+    const VehicleState &initial_state, 
     VehicleActuators &pred_actuators,
     vector<double> &pred_traj_x,
-    vector<double> &pred_traj_y) const
+    vector<double> &pred_traj_y)
 {
-    typedef CPPAD_TESTVECTOR(double) Dvector;
+    // Extract initial state.
+    double x = initial_state.x;
+    double y = initial_state.y;
+    double psi = initial_state.psi;
+    double v = initial_state.v;
 
-    VehicleState veh_state = AdjustForLatency(
-        current_state,
-        current_actuators,
-        latency);
-
-    // extract current state
-    double x = veh_state.x;
-    double y = veh_state.y;
-    double psi = veh_state.psi;
-    double v = veh_state.v;
-
-    double ref_y = ref_traj[0] + ref_traj[1]*x + ref_traj[2]*x*x + ref_traj[3]*x*x*x;
-    double ref_psi = atan(ref_traj[1] + 2*ref_traj[2]*x + 3*ref_traj[3]*x*x);
+    // We're going to add cross-track error and orientation error to the
+    // optimized state variables, so we need to compute initial values.
+    double ref_y = ref_traj.Evaluate(x);
+    double ref_psi = atan(ref_traj.Derivative(x));
     double cte = y - ref_y;
     double epsi = psi - ref_psi;
-
-    std::cout << "cross-track error: " << cte << std::endl;
-    std::cout << "orientation error: " << epsi << std::endl;
 
     // number of independent variables & constraints
     size_t n_vars = 6*N + 2*(N-1);
@@ -257,6 +257,7 @@ bool MPC::Predict(
 
     // Initial value of the independent variables.
     // SHOULD BE 0 besides initial state.
+    typedef CPPAD_TESTVECTOR(double) Dvector;
     Dvector vars(n_vars);
     for (size_t i = 0; i < n_vars; i++) {
         vars[i] = 0;
@@ -276,10 +277,10 @@ bool MPC::Predict(
 
     // make non-actuator variables (effectively) unbounded
     for (size_t i = 0; i < delta_start; i++) {
-        // vars_lowerbound[i] = -DBL_MAX;
-        // vars_upperbound[i] = DBL_MAX;
-        vars_lowerbound[i] = -1.0e19;
-        vars_upperbound[i] = 1.0e19;
+        vars_lowerbound[i] = -DBL_MAX/2;
+        vars_upperbound[i] = DBL_MAX/2;
+        // vars_lowerbound[i] = -1.0e19;
+        // vars_upperbound[i] = 1.0e19;
     }
 
     // Constrain steering angle to [-25deg, 25deg]
@@ -321,7 +322,7 @@ bool MPC::Predict(
     constraints_upperbound[epsi_start] = epsi;
 
     // object that computes objective and constraints
-    CostFunc costFunc(_Lf, ref_traj, ref_velocity, v);
+    CostFunc costFunc(Lf, ref_traj, ref_velocity, v);
 
     // solve the problem
     CppAD::ipopt::solve_result<Dvector> solution;
@@ -345,11 +346,11 @@ bool MPC::Predict(
 
     std::cout << "Cost: " << solution.obj_value << std::endl;
 
-    // Return the first actuator values.
+    // Return the first optimized actuator values.
     pred_actuators.steer = solution.x[delta_start];
     pred_actuators.accel = solution.x[a_start];
 
-    // Also return predicted x/y position values.
+    // Also return predicted x/y positions.
     for (size_t t=1; t < N; t++)
     {
         pred_traj_x.push_back(solution.x[x_start + t]);

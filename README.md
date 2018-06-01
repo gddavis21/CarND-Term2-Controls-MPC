@@ -48,10 +48,10 @@ Model state update equations are as follows:
     + Transform waypoints into vehicle coordinates. The coordinate frame is zeroed at vehicle location, with x-axis aligned to vehicle orientation.
     + Best-fit a cubic polynomial to vehicle-relative waypoints, using standard polynomial regression. The resulting polynomial is used as the reference (desired) trajectory for the vehicle.
     + Transform vehicle state to vehicle coordinates. This is easy--vehicle position and orientation are simply set to zero!
-  * Apply MPC actuator prediction
     + Compensate vehicle state for actuator latency.
+  * Apply MPC optimization to compute steering angle & throttle:
     + Compute initial cross-track error and orientation error.
-    + Utilize Ipopt/CppAD libraries to setup and solve MPC nonlinear optimization problem.
+    + Setup and solve MPC optimization problem.
   * Return optimized 1st time-step actuator values to simulator.
     
 ## Implementation Details
@@ -98,7 +98,7 @@ Choosing and tuning the cost function weight parameters was a critical aspect of
     - I wanted my algorithm to be effective for different reference velocities. My solution is as follows:
       + I manually tuned the steering value weight at 4 different speeds (30, 45, 60, 75 MPH).
       + In the final algorithm I fit a polynomial model function to these (speed, weight) samples.
-      + The MPC optimizer uses this model to re-compute the steering value weight on every iteration, given the current vehicle velocity.
+      + Use this model to re-compute the steering value weight on every iteration, given current vehicle velocity.
       + The rate of steering change weight is always half the computed steering value weight.
 
 ### Accounting for actuator latency:

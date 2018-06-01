@@ -13,11 +13,6 @@
 using namespace std;
 using json = nlohmann::json;
 
-// // For converting back and forth between radians and degrees.
-// constexpr double pi() { return M_PI; }
-// double deg2rad(double x) { return x * pi() / 180; }
-// double rad2deg(double x) { return x * 180 / pi(); }
-
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
 // else the empty string "" will be returned.
@@ -33,39 +28,6 @@ string hasData(string s) {
   return "";
 }
 
-// // Evaluate a polynomial.
-// double polyeval(Eigen::VectorXd coeffs, double x) {
-//   double result = 0.0;
-//   for (int i = 0; i < coeffs.size(); i++) {
-//     result += coeffs[i] * pow(x, i);
-//   }
-//   return result;
-// }
-
-// Fit a polynomial.
-// Adapted from
-// https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
-Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
-                        int order) {
-  assert(xvals.size() == yvals.size());
-  assert(order >= 1 && order <= xvals.size() - 1);
-  Eigen::MatrixXd A(xvals.size(), order + 1);
-
-  for (int i = 0; i < xvals.size(); i++) {
-    A(i, 0) = 1.0;
-  }
-
-  for (int j = 0; j < xvals.size(); j++) {
-    for (int i = 0; i < order; i++) {
-      A(j, i + 1) = A(j, i) * xvals(j);
-    }
-  }
-
-  auto Q = A.householderQr();
-  auto result = Q.solve(yvals);
-  return result;
-}
-
 // This value assumes the model presented in the classroom is used.
 //
 // It was obtained by measuring the radius formed by running the vehicle in the
@@ -78,17 +40,21 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
 // This is the length from front to CoG that has a similar radius.
 const double Lf = 2.67;
 
-const double REF_VELOCITY = mph_to_mps(80.0);  // 80 MPH
+// target vehicle speed
+const double REF_VELOCITY = mph_to_mps(85.0);  // 80 MPH
+
+// simulated actuator latency (must be 100ms for project submission)
+const unsigned int LATENCY_ms = 100;
+
+// Turn on to visualize reference trajectory and predicted vehicle position
+// in the simulator.
+const bool VISUALIZE = true;
 
 int main() 
 {
-    const unsigned int LATENCY_ms = 100;
-    const bool VISUALIZE = true;
-
-    MPC mpc(Lf);
     uWS::Hub h;
 
-    h.onMessage([&mpc](
+    h.onMessage([](
         uWS::WebSocket<uWS::SERVER> ws, 
         char *data, 
         size_t length,
@@ -133,6 +99,9 @@ int main()
         double steering_angle = j[1]["steering_angle"];
         double throttle = j[1]["throttle"];
 
+        // initialize state/actuator data structures
+        //  - convert speed from MPH to m/s
+        //  - change steering angle from CW to CCW
         VehicleState veh_state = { px, py, psi, mph_to_mps(speed) };
         VehicleActuators veh_actuators = { -steering_angle, throttle };
 
@@ -148,10 +117,7 @@ int main()
         veh_state.psi = 0;
 
         // best-fit cubic polynomial trajectory to waypoints
-        // Polynomial ref_traj(3, ptsx.size(), &ptsx[0], &ptsy[0]);
-        Eigen::Map<Eigen::VectorXd> mx(&waypts_x[0], n_waypts);
-        Eigen::Map<Eigen::VectorXd> my(&waypts_y[0], n_waypts);
-        Eigen::VectorXd ref_traj = polyfit(mx, my, 3);
+        Polynomial ref_traj(3, n_waypts, &waypts_x[0], &waypts_y[0]);
 
         // output data we'll send back to simulator
         vector<double> ref_traj_x, ref_traj_y;  // reference trajectory
@@ -159,31 +125,38 @@ int main()
         double steer_value = 0;
         double throttle_value = 0;
 
+        // populate reference trajectory visualization data (want to view in
+        // simulator even if MPC optimizer fails)
         if (VISUALIZE)
         {
             for (double x = 5.0; x < 50.0; x += 2.0)
             {
-                double y = ref_traj[0] + ref_traj[1]*x + ref_traj[2]*x*x + ref_traj[3]*x*x*x;
+                double y = ref_traj.Evaluate(x);
                 ref_traj_x.push_back(x);
                 ref_traj_y.push_back(y);
             }
         }
 
-        // MPC result data
+        // Model actuator latency by optimizing actuators against model-predicted 
+        // state (predicted at time t = now + latency).
+        double latency_sec = LATENCY_ms / 1000.0;
+        veh_state = PredictVehicleState(veh_state, veh_actuators, Lf, latency_sec);
+
+        // Apply MPC optimization to compute new steering angle and throttle (and 
+        // predicted vehicle position for visualization).
         VehicleActuators pred_actuators;
         vector<double> pred_traj_x, pred_traj_y;
 
-        if (mpc.Predict(
+        if (MPC_UpdateActuators(
             ref_traj, 
             REF_VELOCITY, 
+            Lf,
             veh_state, 
-            veh_actuators, 
-            LATENCY_ms/1000.0,
-            pred_actuators, 
-            pred_traj_x, 
-            pred_traj_y))
+            pred_actuators,     // output
+            pred_traj_x,        // output
+            pred_traj_y))       // output
         {
-            steer_value = -pred_actuators.steer;
+            steer_value = -pred_actuators.steer;  // change steering angle CCW to CW
             throttle_value = pred_actuators.accel;
 
             if (VISUALIZE)
@@ -192,9 +165,6 @@ int main()
                 mpc_traj_y = pred_traj_y;
             }
         }
-
-        // Calculate steering angle and throttle using MPC.
-        // Both are in between [-1, 1].
 
         json msgJson;
         // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.

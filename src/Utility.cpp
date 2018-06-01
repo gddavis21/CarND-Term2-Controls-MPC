@@ -21,8 +21,6 @@ double mph_to_mps(double mph) {
 }
 
 double mps_to_mph(double mps) {
-    // double inch_per_sec = mps * 1000 / mm_per_inch;
-    // return inch_per_sec * sec_per_hour / inch_per_mile;
     return mps / mph_to_mps(1.0);
 }
 
@@ -103,6 +101,11 @@ Polynomial::Polynomial(
     _coeffs = polyfit(mx, my, degree);
 }
 
+VectorXd Polynomial::GetCoefficients() const
+{
+    return _coeffs;
+}
+
 // evaluate polynomial
 double Polynomial::Evaluate(double x) const
 {
@@ -166,3 +169,29 @@ double Polynomial::Derivative(double x) const
 
 //     return result;
 // }
+
+LinearInterpolator1D::LinearInterpolator1D(
+    size_t count, 
+    const double *xvals, 
+    const double *yvals)
+{
+    _xvals.insert(_xvals.end(), &xvals[0], &xvals[0] + count);
+    _yvals.insert(_yvals.end(), &yvals[0], &yvals[0] + count);
+}
+
+double LinearInterpolator1D::Interpolate(double x) const
+{
+    size_t N = _xvals.size();
+    x = clamp(x, _xvals[0], _xvals[N-1]);
+
+    size_t i = 1;
+    while (_xvals[i] < x) {
+        i++;
+    }
+
+    double x0 = _xvals[i-1];
+    double x1 = _xvals[i];
+    double y0 = _yvals[i-1];
+    double y1 = _yvals[i];
+    return y0 + (y1-y0)*(x-x0)/(x1-x0);
+}
