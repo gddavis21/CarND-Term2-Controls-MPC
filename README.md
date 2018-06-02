@@ -19,12 +19,12 @@ An additional challenge is the introduction of (simulated) actuator latency. The
 
 ## Running the MPC Controller plug-in app
 
-The simulator is run concurrently with the project plug-in app "mpc".
+The simulator runs concurrently with the project plug-in app "mpc".
 
 By default running ./mpc will drive the vehicle at a target velocity of 90 MPH, with visualization turned OFF.
 
 There are 2 optional command-line arguments:
-  1. Run ./mpc nnn to run a different target velocity, where nnn is the target velocity in miles per hour. For example, run ./MPC 55 to run at 55 MPH target velocity. The velocity is clipped to the range [10,100] MPH.
+  1. Run ./mpc nnn to run a different target velocity, where nnn is the target velocity in miles per hour. For example, run ./mpc 55 to run at 55 MPH target velocity. The velocity is clipped to the range [10,100] MPH.
   2. Enable visualization by running ./mpc 55 vis (in this case 55 is just an example, you can set any target velocity). In this mode the simulator displays a visualization of the reference and predicted trajectories for the vehicle.
 
 ## Explanation of MPC Control
@@ -51,6 +51,7 @@ Model state update equations are as follows:
   * Also given initial actuator values:
     - initial steering angle delta
     - initial acceleration a
+  * Also given a calibration parameter Lf that quantifies the relationship between vehicle length and turn radius
   * Compute updated state at time t = t_0 + dt:
     - x = x_0 + (v_0 * cos(psi_0) * dt)
     - y = y_0 + (v_0 * sin(psi_0) * dt)
@@ -87,7 +88,7 @@ More time steps mean more computation time to solve the MPC optimization problem
   
 For time-step duration, I found it was more effective to directly set a related parameter and let time-step duration be determined by that. The related parameter is what I called "distance to horizon" (H), which is simply the distance over which the MPC optimization problem is solved. 
   * Because the simulator constantly supplies the upcoming road trajectory (of about 100 meters), I decided to setup the MPC optimization to always solve over a distance just short of that (H = 80 meters).
-  * Distance to horizon satisfies the equation H = N\*dt\*v, where v is the current vehicle velocity. Thus dt = H/(N*v) is recomputed as a function of current velocity each time we solve the MPC optimization.
+  * Distance to horizon satisfies the equation H = N\*v\*dt, where v is the current vehicle velocity. Thus dt = H/(N*v) is recomputed as a function of current velocity each time we solve the MPC optimization.
 
 ### MPC Optimization cost function & parameter tuning:
 
@@ -106,14 +107,14 @@ The MPC optimization cost function is a simple sum of weighted squares.
 In summary, the cost function is designed to compute small magnitude, smoothly changing actuation values that maintain small errors in position, orientation and velocity. Other than the weight values, this cost function is identical to what was recommended in the MPC lesson and practice assignment. 
 
 Choosing and tuning the cost function weight parameters is a critical aspect of achieving good algorithm performance. I manually tuned all parameters.
-  * I found that I could set fixed weight values for for velocity error, throttle value, and rate of throttle change. These values worked well over the full range of target velocities I tested at (30-100 MPH).
+  * I found effective fixed weights for velocity error, throttle value, and rate of throttle change. These values worked well over the full range of target velocities I tested at (30-100 MPH).
   * I found it was helpful to progressively weight the cross-track and orientation error terms, giving more weight to the "near-future" terms and less weight to the "far-future" terms.
-  * I found that effective choice of weights for the steering value and rate of steering change terms is highly dependent on current vehicle velocity.
+  * I found the determination of weights for the steering value and rate of steering change terms is highly dependent on current vehicle velocity.
     - The weights scale up with velocity in a non-linear relationship.
     - I found it effective to use the same value for both weights. I don't have a good explanation for why, and it could turn out with further testing & tuning that different values are better.
-    - The algorithm recomputes these weight values on each iteration of the MPC optimization, given the current vehicle velocity.
+    - The algorithm recomputes these weights on each iteration of the MPC optimization, given the current vehicle velocity.
       + I manually tuned the weight parameter at several different speeds.
-      + The algorithm re-computes the weights using a linear interpolation over the manually tuned (velocity, weight) values.
+      + The algorithm re-computes the weights using a linear interpolation over the manually tuned (velocity, weight) samples.
       + I also tried using quadratic and cubic polynomials fit to the (velocity, weight) samples, and using the fitted polynomial to compute weights. However, I didn't have a good justification for assuming it's a quadratic or cubic polynomial relationship, so in the end I decided to go with the non-parametric approach.
 
 ### Accounting for actuator latency:
