@@ -145,9 +145,11 @@ public:
         fg[1 + cte_start] = vars[cte_start];
         fg[1 + epsi_start] = vars[epsi_start];
 
-        //double dt = PRED_STEP;
-        double T = H/_cur_velocity;
+        // Compute time-step duration (dt) from horizon distance, current velocity
+        // and number of time steps.
+        double T = H/_cur_velocity;  // time to horizon
         double dt = T/N;
+        
         VectorXd C = _ref_traj.GetCoefficients();
 
         // The rest of the constraints
