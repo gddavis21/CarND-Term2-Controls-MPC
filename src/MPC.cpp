@@ -46,6 +46,8 @@ public:
         _ref_velocity = ref_velocity;
         _cur_velocity = std::max(cur_velocity, mph_to_mps(10));
 
+        // The cost function weights for steering angle and rate of steering
+        // change are velocity dependent.
         _weight_steering_angle = Weight_SteeringAngle(_cur_velocity);
         _weight_rate_change_steering = Weight_RateChangeSteering(_cur_velocity);
     }
@@ -53,6 +55,8 @@ public:
     // compute velocity-adaptive weight parameter for steering angle cost term
     static double Weight_SteeringAngle(double velocity)
     {
+        // Use several manually tuned velocity vs. weight samples and linear
+        // interpolation to compute a specific weight for the given velocity.
         const double V[] = {
             mph_to_mps(10),
             mph_to_mps(40),
@@ -69,6 +73,8 @@ public:
     // compute velocity-adaptive weight parameter for rate of steering change
     static double Weight_RateChangeSteering(double velocity)
     {
+        // Use several manually tuned velocity vs. weight samples and linear
+        // interpolation to compute a specific weight for the given velocity.
         const double V[] = {
             mph_to_mps(10),
             mph_to_mps(40),
@@ -96,10 +102,17 @@ public:
 
         // add reference-state cost
         for (size_t t=0; t < N; t++) {
+            // It's essential to optimize over cross-track and orientation error
+            // out to the horizon, but helps to weight the nearer terms more heavily
+            // than the further terms. We'll gradually scale these weights from 
+            // (1+k) to (1-k) for 0<k<1.
             double k = 0.3;
             double w = 1.0 + k*(1.0 - 2*double(t)/(N-1));
             fg[0] += w*CppAD::pow(vars[cte_start + t], 2);
             fg[0] += w*CppAD::pow(vars[epsi_start + t], 2);
+
+            // Also penalize for velocity error, but use much smaller weight.
+            // Otherwise the car won't slow down enough around sharp turns.
             fg[0] += 0.1*CppAD::pow(vars[v_start + t] - _ref_velocity, 2);
         }
 
@@ -112,7 +125,7 @@ public:
         // penalize rates of actuator changes
         for (size_t t=0; t < N-2; t++) {
             fg[0] += _weight_rate_change_steering*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-            fg[0] += 0.5*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+            fg[0] += 0.2*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
         }
 
         //

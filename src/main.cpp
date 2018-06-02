@@ -41,20 +41,30 @@ string hasData(string s) {
 const double Lf = 2.67;
 
 // target vehicle speed
-const double REF_VELOCITY = mph_to_mps(85.0);  // 80 MPH
+const double DEFAULT_VELOCITY = mph_to_mps(90.0);
 
 // simulated actuator latency (must be 100ms for project submission)
 const unsigned int LATENCY_ms = 100;
 
-// Turn on to visualize reference trajectory and predicted vehicle position
-// in the simulator.
-const bool VISUALIZE = true;
-
-int main() 
+int main(int argc, char* argv[])
 {
+    double ref_velocity = DEFAULT_VELOCITY;
+    bool visualize = false;
+
+    // Pass reference velocity (in MPH) as optional 1st CL argument.
+    if (argc > 1) {
+        ref_velocity = mph_to_mps(clamp(atof(argv[1]), 10, 100));
+    }
+
+    // Pass "vis" as 2nd CL argument to visualize reference trajectory and 
+    // predicted vehicle position in the simulator.
+    if (argc > 2) {
+        visualize = (strcmp(argv[2], "vis") == 0);
+    }
+
     uWS::Hub h;
 
-    h.onMessage([](
+    h.onMessage([ref_velocity, visualize](
         uWS::WebSocket<uWS::SERVER> ws, 
         char *data, 
         size_t length,
@@ -127,7 +137,7 @@ int main()
 
         // populate reference trajectory visualization data (want to view in
         // simulator even if MPC optimizer fails)
-        if (VISUALIZE)
+        if (visualize)
         {
             for (double x = 5.0; x < 50.0; x += 2.0)
             {
@@ -149,7 +159,7 @@ int main()
 
         if (MPC_UpdateActuators(
             ref_traj, 
-            REF_VELOCITY, 
+            ref_velocity, 
             Lf,
             veh_state, 
             pred_actuators,     // output
@@ -159,7 +169,7 @@ int main()
             steer_value = -pred_actuators.steer;  // change steering angle CCW to CW
             throttle_value = pred_actuators.accel;
 
-            if (VISUALIZE)
+            if (visualize)
             {
                 mpc_traj_x = pred_traj_x;
                 mpc_traj_y = pred_traj_y;
